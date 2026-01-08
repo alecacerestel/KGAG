@@ -72,7 +72,8 @@ through the Collaborative Knowledge Graph structure.
 
 import torch
 import torch.nn as nn
-from .layers import GCNLayer, AttentionAggregator
+from .layers import GCNLayer
+from .aggregators import AttentionGroupAggregator
 
 
 class KGAG(nn.Module):
@@ -247,8 +248,12 @@ class KGAG(nn.Module):
                 )
             )
         
-        # Group aggregator (placeholder for future attention mechanism)
-        self.group_aggregator = AttentionAggregator(embedding_dim)
+        # Group aggregator with attention mechanism
+        self.group_aggregator = AttentionGroupAggregator(
+            embedding_dim=embedding_dim,
+            attention_type='concat',
+            dropout=0.1
+        )
     
     def construct_ckg_adjacency(self, user_item_edges, kg_edges):
         """
@@ -453,22 +458,58 @@ class KGAG(nn.Module):
         
         return batch_user_embeddings, batch_item_embeddings
     
-    def get_group_embedding(self, group_members):
+    def get_group_embedding(self, group_members, item_indices, user_item_edges, kg_edges):
         """
-        Generate group embedding from member user embeddings.
+        Generate group embedding from member user embeddings using attention mechanism.
         
-        This aggregates individual user representations into a single group representation.
-        Will be enhanced with attention mechanism in future phase.
+        This aggregates individual user representations into a single group representation
+        using the attention-based aggregator that considers both member-member similarity
+        and candidate item influence.
         
         Args:
-            group_members: List of lists, each containing user indices for a group
-                          Example: [[0, 1, 2], [3, 4], [5, 6, 7, 8]]
+            group_members: List of user indices for the group
+                          Example: [0, 1, 2] or tensor of shape (num_members,)
+            item_indices: Item indices to recommend, shape (batch_size,)
+            user_item_edges: User-item interaction edges for CKG construction
+            kg_edges: Knowledge graph edges for CKG construction
         
         Returns:
-            group_embeddings: Aggregated embeddings for each group
+            group_embeddings: Aggregated embeddings for the group, shape (batch_size, embedding_dim)
+            attention_weights: Attention weights for interpretability, shape (batch_size, num_members)
         """
-        user_embeddings = self.user_embedding.weight
-        return self.group_aggregator(user_embeddings, group_members)
+        # Get knowledge-aware user and item embeddings
+        if isinstance(group_members, list):
+            group_members = torch.tensor(group_members, dtype=torch.long)
+        
+        # Get all embeddings after CKG propagation
+        all_user_embeddings, all_item_embeddings = self.get_all_embeddings(
+            user_item_edges, kg_edges
+        )
+        
+        # Extract member embeddings
+        member_embeddings = all_user_embeddings[group_members]  # (num_members, embedding_dim)
+        
+        # Extract item embeddings for batch
+        item_embeddings = all_item_embeddings[item_indices]  # (batch_size, embedding_dim)
+        
+        # Aggregate members to group for each item in batch
+        batch_size = item_embeddings.size(0)
+        group_embeddings_list = []
+        attention_weights_list = []
+        
+        for i in range(batch_size):
+            # Get group embedding with attention for this item
+            group_emb, attn_weights = self.group_aggregator(
+                member_embeddings, item_embeddings[i]
+            )
+            group_embeddings_list.append(group_emb)
+            attention_weights_list.append(attn_weights)
+        
+        # Stack results
+        group_embeddings = torch.stack(group_embeddings_list)  # (batch_size, embedding_dim)
+        attention_weights = torch.stack(attention_weights_list)  # (batch_size, num_members)
+        
+        return group_embeddings, attention_weights
     
     def predict(self, user_embeddings, item_embeddings):
         """
