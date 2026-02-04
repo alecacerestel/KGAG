@@ -1,0 +1,207 @@
+Inicialización y Mapeo (__init__):
+
+Crea estructuras vacías para almacenar interacciones y diccionarios de mapeo (user_id_map, item_id_map, etc.).
+El objetivo es convertir los IDs originales de los archivos de texto (que pueden ser arbitrarios) 
+en índices internos consecutivos (0, 1, 2...) necesarios para las matrices y tensores.
+Carga de Interacciones Usuario-Item (load_user_item_interactions):
+
+Lee userRatingTrain.txt.
+Registra a todos los usuarios e items válidos y sus interacciones.
+Puebla los mapas de IDs de usuarios e items.
+Carga de Miembros de Grupos (load_group_members):
+
+Lee groupMember.txt.
+Asocia cada ID de grupo con una lista de IDs de usuarios (miembros).
+Filtra usuarios que no existan en los datos de entrenamiento para evitar errores de índice.
+Carga de Interacciones Grupo-Item (load_group_item_interactions):
+
+Lee groupRatingTrain.txt.
+Carga las preferencias colectivas (qué items le gustan a qué grupo).
+Estas sirven como muestras positivas para el entrenamiento.
+Carga del Grafo de Conocimiento (load_knowledge_graph):
+
+Lee kg_final.txt.
+Paso crucial de integración: Primero mapea todos los item_id existentes al espacio de entity_id (entidades del grafo).
+Carga las tripletas del grafo (Cabeza, Relación, Cola), 
+añadiendo nuevas entidades o relaciones si aparecen por primera vez.
+Generación de Tensores (get_..._edges):
+
+Convierte las listas de Python en tensores de PyTorch (torch.tensor).
+get_user_item_edges: Genera el grafo bipartito usuario-item.
+get_kg_edges: Genera los bordes del grafo de conocimiento.
+Generación de Muestras de Entrenamiento (get_training_samples):
+
+Implementa una estrategia de Muestreo Negativo (Negative Sampling).
+Toma las interacciones reales (positivas) entre grupos e items.
+Genera interacciones falsas (negativas) 
+seleccionando items aleatorios que el grupo no ha consumido. 
+Esto es fundamental para entrenar modelos de recomendación (aprender a distinguir lo relevante de lo no relevante)
+
+
+Resumen:
+El script actúa como un puente (ETL). 
+Toma archivos de texto crudos de BeHAVE, normaliza los IDs, 
+construye la estructura del grafo heterogéneo (Usuarios + Items + Entidades KG + Grupos) 
+y devuelve tensores listos para ser consumidos por una red neuronal en PyTorch.
+
+
+
+
+Cosas que debo ver si faltan: 
+
+1. Falta manejo de Embeddings Pre-entrenados:
+El docstring menciona item_embeddings_final.npy como un archivo de salida de BeHAVE,
+pero el código no tiene ninguna función para cargarlo.
+
+
+Checklist de Implementación: 
+1. Estructura de Datos (Dataset & DataLoader)
+ Crear clase KGAGDataset: Una clase que herede de torch.utils.data.Dataset. 
+ Debe recibir las muestras positivas y generar las negativas dinámicamente o pre-calculadas.
+ Implementar __getitem__: Que devuelva una tupla: (group_id, positive_item_id, negative_item_id).
+
+2. Carga de Datos de Evaluación
+ Cargar groupRatingTest.txt: Crear una función similar a load_group_item_interactions pero para el archivo de test.
+ Cargar userRatingTest.txt: (Opcional, si el modelo usa validación a nivel de usuario).
+ Protocolo de Evaluación: Generar listas de items candidatos (el item real + 99 items aleatorios) para métricas como Hit@K o NDCG@K.
+
+3. Embeddings e Inicialización
+ Cargar item_embeddings_final.npy: Función para leer este archivo numpy y mapearlo a los índices internos que has creado en item_id_map.
+ Inicializar Embeddings de Entidades: Asegurar que los items y las entidades del KG compartan el mismo espacio latente.
+
+4. Optimizaciones
+ Mapeo Inverso: A veces es útil tener internal_id -> original_id para depurar o generar el archivo de resultados final.
+ Guardar/Cargar estado procesado: Si el grafo es muy grande, procesarlo cada vez es lento. 
+ Añadir funcionalidad para guardar el objeto loader procesado usando pickle.
+
+
+
+
+Orden para correr los pipelines:
+1. Generación de Datos (BeHave)
+    crea usuarios sinteticos, grupos y sus interacciones
+    archivo: run_pipeline.py
+    input: kg_final.txt
+    output: dataset/MovieLens_RecBole_KG/BeHAVE/Config2_33_33_33_v1/ (ejem)
+
+2. Carga de Datos
+    Lee los archivos de la carpeta específica generada arriba y los convierte a tensores.
+    Archivo: dataloader.py
+
+3. Entrenamiento y Evaluación (KGAG)
+    Inicializa el modelo, entrena y guarda resultados
+    Archivo: Falta, debería ser algo asi como kGAG/main.py o KGAG/train.py
+
+Estructura para tener un pipeline robusto:
+
+BeHave/
+├── run_pipeline_BeHAVE.py       <-- (EXISTENTE) Generador de datos
+├── run_experiments_full.py      <-- (NUEVO) El "Director de Orquesta"
+├── dataset/                     <-- Datos
+└── KGAG/
+    ├── dataloader.py            <-- (EXISTENTE) Lector de datos
+    ├── model.py                 <-- La red neuronal
+    └── train.py                 <-- (NECESARIO) Script de entrenamiento
+
+
+data loader  notes
+convierte el ourput de behave para que sea el input de kgag
+
+put attention for how we work with data and how I processed
+
+Representation learning -> vectorizar embedder un object
+                            convertir nombres a IDs en una lsta
+                            en este caso
+                            node, rel, text, tasks....
+
+
+Constrative learning -> funcion de loss (no siempre supervisada)
+                        trai tecnc, 
+                        acerca y aleja.
+
+                        there are two tipes of outputs
+
+                        grupo A, matrix (posit)
+                        grupo B, matrix (negat)
+                        
+                        user, posit (lo que le gusta)
+                        user, negat (lo que no le gusta)
+
+                        que significa el positivo y negativo? 
+
+
+https://anonymous.4open.science/r/DRUPER_InfoSciences-04C2/KGAG/KGAG.py
+finalizar Dataloader con cosas que pueden pasar y la info que me dieron
+ pensar que pasa si hay grupos con mas y menos gente. 
+
+ considerar las funciones, hacer para usuarios y grupos
+
+
+ Things I did
+
+dataloader 
+ PyTorch needs a Dataset for the training DataLoader
+ 3 new methods 
+    load_item_embeddings() - Load numpy file with embeddings
+    load_test_data() - Load groupRatingTest.txt and userRatingTest.txt
+    get_test_groups() - Get test groups for evaluation
+
+
+new KGAG/dataset.py
+ PyTorch needs a Dataset for the training DataLoader
+    KGAGDataset class that inherits from torch.utils.data.Dataset
+        Takes groups and their positive interactions
+        Generates negative samples (items the group did NOT consume)
+        Returns (group_id, positive_item, negative_item) for training
+
+new KGAG/train.py
+    Simple training script
+    WHY: Missing main file to train the model
+    WHAT IT DOES:
+    Load data with BeHAVEDataLoader
+    Create KGAGDataset
+    Initialize KGAG model
+    Basic training loop
+    Save checkpoints
+ 
+ use the output save in the file S_AU 
+ que tiene solo usuarios adptables
+
+to use: 
+python KGAG/train.py --data_dir dataset/MovieLens_RecBole_KG/BeHAVE/S_AU/ --epochs 20 --batch_size 256
+
+too launch train.py I should use at the terminal
+
+just a part, not the complete train. too much time
+C:/Python312/python.exe KGAG/train.py --data_dir dataset/MovieLens_RecBole_KG/BeHAVE/S_AU/ --epochs 20 --batch_size 256 
+
+python version
+train script
+where is the train data
+number of epochs
+number of samples
+
+
+
+file read_loss_history.py
+    file use to read the ouput of the train.py code
+
+
+Asegurarme el dataloader funciona!!!
+train usa dataloader
+
+ver como hacer get user item
+que hace el tensorDataset que uso en las lineas 510 con el dataloader
+tmb hay algo llamado tensorDataset (me permite ver mis datos como tensor con PyTorch)
+and Dataloader en PyTorch
+
+faire un git ignore en kgag 
+
+agregar funcion para cargar el checkpoint de train
+y tambien como funciona el checkpoint, explicacion 
+
+
+
+Hacer una explicacion de DataLoader
+bien detallada y organizada 
+para poder explicarle al resto

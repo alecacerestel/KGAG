@@ -1,0 +1,6 @@
+# KGAG Model - Minimal Requirements
+# Install with: pip install -r requirements-minimal.txt
+
+# Core Dependencies Only
+torch>=2.0.0
+numpy>=2.0.0
